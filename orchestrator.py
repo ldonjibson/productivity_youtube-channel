@@ -49,6 +49,7 @@ load_dotenv()
 VAST_API_KEY         = os.environ["VAST_API_KEY"]
 MUSETALK_API_KEY     = os.environ.get("MUSETALK_API_KEY", "musetalk-secret")
 ORCHESTRATOR_API_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "orchestrator-secret")
+VAST_TEMPLATE_ID     = os.environ.get("VAST_TEMPLATE_ID", "")   # optional: reuse pre-built template for faster startup
 YOUTUBE_CLIENT_ID    = os.environ.get("YOUTUBE_CLIENT_ID", "")
 YOUTUBE_CLIENT_SECRET= os.environ.get("YOUTUBE_CLIENT_SECRET", "")
 YOUTUBE_REFRESH_TOKEN= os.environ.get("YOUTUBE_REFRESH_TOKEN", "")
@@ -161,6 +162,8 @@ def run_pipeline(job_id: str):
         job["step"] = "searching_gpu"
         offer_id, host_ip = find_best_offer()
         print(f"[{job_id[:8]}] Found offer {offer_id}")
+        if VAST_TEMPLATE_ID:
+            print(f"[{job_id[:8]}] Using template {VAST_TEMPLATE_ID} (fast startup)")
 
         # ── Step 2: Provision instance ────────────────────────────────────────
         job["step"] = "provisioning"
@@ -302,9 +305,14 @@ def find_best_offer() -> tuple[int, str]:
 
 
 def create_instance(offer_id: int, job_id: str) -> int:
-    """Create a vast.ai instance with onstart.sh that auto-installs and starts MuseTalk."""
+    """Create a vast.ai instance.
 
-    onstart = f"""#!/bin/bash
+    If VAST_TEMPLATE_ID is set, uses the pre-built template (instant startup).
+    Otherwise, runs the full onstart.sh install (~10 min).
+    """
+
+    # ── Full install onstart (fallback when no template) ──────────────────────
+    full_onstart = f"""#!/bin/bash
 set -e
 # Pull setup scripts from GitHub and run them
 apt-get update -qq
@@ -316,6 +324,16 @@ chmod +x /workspace/musetalk_deploy.sh
 
 bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
 """
+
+    # ── Minimal onstart (template has everything pre-installed) ────────────────
+    template_onstart = f"""#!/bin/bash
+set -e
+export API_KEY="{MUSETALK_API_KEY}"
+cd /workspace
+nohup python -m uvicorn musetalk_server:app --host 0.0.0.0 --port 8000 --workers 1 > /workspace/server.log 2>&1 &
+"""
+
+    onstart = template_onstart if VAST_TEMPLATE_ID else full_onstart
 
     payload = {
         "client_id":    "me",
@@ -329,6 +347,8 @@ bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
         "label":        f"musetalk-{job_id[:8]}",
         "runtype":      "ssh",
     }
+    if VAST_TEMPLATE_ID:
+        payload["template_hash_id"] = VAST_TEMPLATE_ID
 
     resp = requests.put(
         f"{VAST_BASE}/asks/{offer_id}/",
