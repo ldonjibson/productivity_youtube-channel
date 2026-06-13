@@ -1,17 +1,19 @@
 #!/bin/bash
 # =============================================================================
-# Build a Vast.ai Template LOCALLY (run this ON the instance itself)
+# Build a Reusable MuseTalk Docker Image for Vast.ai
 # =============================================================================
-# SSH into your vast.ai instance, then run this script directly.
-# No remote SSH extraction needed — everything runs locally.
+# Run this ON a vast.ai instance where you want to snapshot the state.
 #
-# Usage (on the instance):
-#   export VAST_API_KEY="your-key"
-#   export INSTANCE_ID=$(curl -s https://instance-data/vastai-id 2>/dev/null || echo "")
+# This commits the container as a Docker image, pushes to Docker Hub,
+# then gives you instructions to create a template.
+#
+# Why Docker commit? Because Vast.ai templates are just configs (image + onstart).
+# They can NOT "save instance state" — you need a Docker image with everything pre-installed.
+#
+# Usage:
+#   export DOCKERHUB_USERNAME="your-dockerhub-user"
+#   export DOCKERHUB_TOKEN="your-dockerhub-access-token"
 #   bash build_template_local.sh
-#
-# Or pass it explicitly:
-#   bash build_template_local.sh <INSTANCE_ID>
 # =============================================================================
 
 set -e
@@ -21,29 +23,16 @@ log()  { echo -e "${GREEN}[✔] $1${NC}"; }
 warn() { echo -e "${YELLOW}[!] $1${NC}"; }
 err()  { echo -e "${RED}[✘] $1${NC}"; exit 1; }
 
-# ── Args ──────────────────────────────────────────────────────────────────────
-[ -z "$VAST_API_KEY" ] && err "Set VAST_API_KEY env var first"
-INSTANCE_ID="${1:-}"
-
-if [ -z "$INSTANCE_ID" ]; then
-    # Try to auto-detect instance ID from vast.ai metadata
-    INSTANCE_ID=$(curl -s http://metadata.vast.ai/instance_id 2>/dev/null || echo "")
-fi
-
-if [ -z "$INSTANCE_ID" ]; then
-    # Ask user
-    read -p "Enter your Vast.ai instance ID: " INSTANCE_ID
-fi
-
-[ -z "$INSTANCE_ID" ] && err "Could not determine instance ID"
-
-VAST_BASE="https://console.vast.ai/api/v0"
-AUTH="Authorization: Bearer $VAST_API_KEY"
+# ── Config ───────────────────────────────────────────────────────────────────
+IMAGE_NAME="${DOCKERHUB_USERNAME:-musetalk}/musetalk"
+IMAGE_TAG="latest"
+FULL_IMAGE="$IMAGE_NAME:$IMAGE_TAG"
+GITHUB_RAW="https://raw.githubusercontent.com/ldonjibson/productivity_youtube-channel/main"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║     BUILDING MUSETALK TEMPLATE (LOCAL MODE)                ║"
-echo "║     Instance: $INSTANCE_ID                                  ║"
+echo "║     BUILDING MUSETALK REUSABLE DOCKER IMAGE                ║"
+echo "║     Image: $FULL_IMAGE                                     ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -52,98 +41,95 @@ log "Step 1/5: Installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq wget git curl ffmpeg > /dev/null 2>&1
 
-# ── Step 2: Install Python deps ──────────────────────────────────────────────
-log "Step 2/5: Installing Python dependencies..."
-pip install --quiet torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 2>/dev/null || true
-pip install --quiet fastapi uvicorn python-multipart requests 2>/dev/null || true
-
-# ── Step 3: Run MuseTalk deploy ──────────────────────────────────────────────
-log "Step 3/5: Running MuseTalk deploy script..."
+# ── Step 2: Run MuseTalk deploy (installs everything + downloads models) ─────
+log "Step 2/5: Running MuseTalk deploy (this downloads ~8GB of models)..."
 mkdir -p /workspace
 cd /workspace
 
-# Download setup scripts from GitHub
-GITHUB_RAW="https://raw.githubusercontent.com/ldonjibson/productivity_youtube-channel/main"
-
-echo "  Downloading musetalk_server.py..."
+echo "  Downloading scripts from GitHub..."
 wget -q "$GITHUB_RAW/musetalk_server.py" -O /workspace/musetalk_server.py
-
-echo "  Downloading musetalk_deploy.sh..."
 wget -q "$GITHUB_RAW/musetalk_deploy.sh" -O /workspace/musetalk_deploy.sh
 chmod +x /workspace/musetalk_deploy.sh
 
-echo "  Running deploy script (this downloads ~8GB of models)..."
-bash /workspace/musetalk_deploy.sh --api-key template-build 2>&1 | tail -5
+echo "  Running deploy script..."
+bash /workspace/musetalk_deploy.sh --api-key template-build 2>&1 | tail -10
 
-# ── Step 4: Verify installation ──────────────────────────────────────────────
-log "Step 4/5: Verifying installation..."
+# ── Step 3: Verify installation ──────────────────────────────────────────────
+log "Step 3/5: Verifying installation..."
 export FFMPEG_PATH="/workspace/ffmpeg-static"
-
-# Quick health check — start server briefly to confirm it loads
 cd /workspace
+
 timeout 30 python3 -c "
 import sys
 sys.path.insert(0, '/workspace')
 try:
     from musetalk_server import app
-    print('FastAPI app imports OK')
+    print('  FastAPI app imports OK')
 except Exception as e:
-    print(f'Import warning: {e}')
-" 2>/dev/null || warn "Could not import musetalk_server (may need manual check)"
+    print(f'  Import warning: {e}')
+" 2>/dev/null || warn "Could not verify musetalk_server"
 
-# ── Step 5: Create template ──────────────────────────────────────────────────
-log "Step 5/5: Creating template..."
+# ── Step 4: Docker commit ────────────────────────────────────────────────────
+log "Step 4/5: Committing container state as Docker image..."
 
-TEMPLATE_NAME="musetalk-$(date +%Y%m%d-%H%M%S)"
-RESULT=$(curl -s -X PUT "$VAST_BASE/asks/$INSTANCE_ID/" \
-    -H "$AUTH" -H "Content-Type: application/json" \
-    -d "{
-        \"templates\": [{
-            \"template_name\": \"$TEMPLATE_NAME\",
-            \"instance_id\": $INSTANCE_ID
-        }]
-    }")
+# Find our container ID
+CONTAINER_ID=$(cat /proc/1/cpuset 2>/dev/null | cut -d'/' -f3 || hostname)
+log "  Container ID: $CONTAINER_ID"
 
-TEMPLATE_HASH=$(echo "$RESULT" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    # Try different response formats
-    if 'template_id' in data:
-        print(data['template_id'])
-    elif 'templates' in data:
-        t = data['templates']
-        if isinstance(t, list) and t:
-            print(t[0].get('hash', t[0].get('id', '')))
-        elif isinstance(t, dict):
-            print(t.get('hash', t.get('id', '')))
-    elif 'hash' in data:
-        print(data['hash'])
-    elif 'id' in data:
-        print(data['id'])
-except Exception as e:
-    print(f'parse_error: {e}', file=sys.stderr)
-" 2>/dev/null || echo "")
+# Get the base image we're running on
+BASE_IMAGE=$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_ID" 2>/dev/null || echo "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime")
+log "  Base image: $BASE_IMAGE"
 
-if [ -n "$TEMPLATE_HASH" ] && [ "$TEMPLATE_HASH" != "parse_error"* ]; then
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════╗"
-    echo "║  ✅ TEMPLATE CREATED SUCCESSFULLY!                         ║"
-    echo "╠══════════════════════════════════════════════════════════════╣"
-    echo "║  Template Name: $TEMPLATE_NAME"
-    echo "║  Template Hash: $TEMPLATE_HASH"
-    echo "║                                                             ║"
-    echo "║  Add to your .env file:                                     ║"
-    echo "║    VAST_TEMPLATE_ID=$TEMPLATE_HASH"
-    echo "╚══════════════════════════════════════════════════════════════╝"
+# Commit the container
+docker commit "$CONTAINER_ID" "$FULL_IMAGE" 2>&1 || {
+    warn "docker commit failed. Trying with sudo..."
+    sudo docker commit "$CONTAINER_ID" "$FULL_IMAGE" 2>&1 || err "docker commit failed"
+}
+
+log "Docker image created: $FULL_IMAGE"
+log "Image size: $(docker images --format '{{.Size}}' "$FULL_IMAGE" 2>/dev/null || echo 'unknown')"
+
+# ── Step 5: Push to Docker Hub ───────────────────────────────────────────────
+if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+    log "Step 5/5: Pushing to Docker Hub..."
+    
+    # Login
+    echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin 2>&1 || {
+        warn "docker login failed. Trying with sudo..."
+        echo "$DOCKERHUB_TOKEN" | sudo docker login -u "$DOCKERHUB_USERNAME" --password-stdin 2>&1 || err "Docker Hub login failed"
+    }
+    
+    # Push (this may take a while — it's a big image)
+    docker push "$FULL_IMAGE" 2>&1 || {
+        warn "docker push failed. Trying with sudo..."
+        sudo docker push "$FULL_IMAGE" 2>&1 || err "Docker Hub push failed"
+    }
+    
+    log "Image pushed: $FULL_IMAGE"
 else
-    warn "Could not parse template hash from API response."
-    echo "Raw response: $RESULT"
-    echo ""
-    echo "You may need to save the template manually from the Vast.ai dashboard."
-    echo "Go to: https://cloud.vast.ai/templates and create one from instance $INSTANCE_ID"
+    warn "DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set."
+    warn "Skipping push. To push manually:"
+    warn "  docker login && docker push $FULL_IMAGE"
 fi
 
+# ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
-log "Done! The instance now has MuseTalk fully installed."
-log "You can destroy this instance and use the template for faster startups."
+echo "══════════════════════════════════════════════════════════════"
+echo "  ✅ DOCKER IMAGE READY: $FULL_IMAGE"
+echo "══════════════════════════════════════════════════════════════"
+echo ""
+echo "  To create a Vast.ai template:"
+echo "  1. Go to https://cloud.vast.ai/templates"
+echo "  2. Click '+ New'"
+echo "  3. Set Docker Image: $FULL_IMAGE"
+echo "  4. Set Disk Space: 80 GB"
+echo "  5. Set Launch Mode: SSH"
+echo "  6. Add On-Start Script:"
+echo '     #!/bin/bash'
+echo '     export FFMPEG_PATH="/workspace/ffmpeg-static"'
+echo '     cd /workspace'
+echo '     nohup python3 -m uvicorn musetalk_server:app --host 0.0.0.0 --port 8000 > /workspace/server.log 2>&1 &'
+echo "  7. Save → get template hash → add to .env as VAST_TEMPLATE_ID"
+echo ""
+echo "  With this image, new instances boot in ~30-60 seconds"
+echo "  (models already baked in, no download needed)"
