@@ -60,7 +60,8 @@ WORK_DIR.mkdir(exist_ok=True)
 
 # ── GitHub raw URL for your setup scripts (update to your fork/repo) ──────────
 # The instance pulls these on startup via /root/onstart.sh
-GITHUB_RAW = "https://raw.githubusercontent.com/YOUR_USER/musetalk-vastai/main"
+GITHUB_RAW = "https://raw.githubusercontent.com/ldonjibson/productivity_youtube-channel/main"
+GITHUB_REPO = "https://github.com/ldonjibson/productivity_youtube-channel.git"
 
 # ── Job store ─────────────────────────────────────────────────────────────────
 jobs: dict[str, dict] = {}
@@ -221,36 +222,83 @@ def run_pipeline(job_id: str):
 def vast_headers():
     return {"Authorization": f"Bearer {VAST_API_KEY}"}
 
-
 def find_best_offer() -> tuple[int, str]:
-    """Find cheapest RTX 4090 or A100 with direct port access."""
-    query = {
-        "verified":          {"eq": True},
+    """Find best available GPU for MuseTalk.
+    IMPORTANT vast.ai REST API quirks:
+      - type must be "ondemand" (not "on-demand")
+      - gpu_ram is in MB not GB
+      - order must be array of [field, direction] pairs
+      - do NOT filter by gpu_name — use priority scoring instead
+        since exact name strings vary (e.g. "Tesla V100" not "V100")
+    """
+    payload = {
+        "limit":             20,
+        "type":              "ondemand",
+        "order":             [["dph_total", "asc"]],
         "rentable":          {"eq": True},
-        "num_gpus":          {"eq": 1},
+        "rented":            {"eq": False},
         "direct_port_count": {"gte": 1},
-        "gpu_ram":           {"gte": 20},   # GB — covers 4090 (24GB) and A100 (40/80GB)
-        "disk_space":        {"gte": 50},
-        "type":              "on-demand",
+        "disk_space":        {"gte": 100},   # GB — headroom for models + outputs
+        "gpu_ram":           {"gte": 25000}, # MB — 25GB+ rules out weak cards
     }
-    resp = requests.get(
+    resp = requests.post(
         VAST_SEARCH,
-        headers=vast_headers(),
-        params={"q": str(query).replace("'", '"'), "order": "dph_total", "limit": 10},
+        headers={**vast_headers(), "Content-Type": "application/json"},
+        json=payload,
         timeout=30,
     )
-    resp.raise_for_status()
+ 
+    if resp.status_code != 200:
+        raise RuntimeError(f"vast.ai search failed {resp.status_code}: {resp.text}")
+ 
     offers = resp.json().get("offers", [])
+ 
+    # Fallback: retry with 16GB minimum if nothing 25GB+ found
+    if not offers:
+        payload["gpu_ram"] = {"gte": 16000}
+        payload["disk_space"] = {"gte": 50}
+        resp = requests.post(
+            VAST_SEARCH,
+            headers={**vast_headers(), "Content-Type": "application/json"},
+            json=payload,
+            timeout=30,
+        )
+        offers = resp.json().get("offers", [])
+ 
     if not offers:
         raise RuntimeError("No suitable GPU offers found on vast.ai")
-
-    # Prefer 4090 > A100 40GB > A100 80GB by price
-    for offer in offers:
-        gpu = offer.get("gpu_name", "")
-        if "4090" in gpu or "A100" in gpu or "3090" in gpu:
-            return offer["id"], offer.get("public_ipaddr", "")
-
-    return offers[0]["id"], offers[0].get("public_ipaddr", "")
+ 
+    # Score offers by performance tier first, then price within tier.
+    # Tiers based on actual vast.ai GPU names observed:
+    #   Tier 0 = best (A100, H100, RTX 5090, L40)
+    #   Tier 1 = great (Q RTX 8000, RTX A6000, A40, RTX 5000Ada)
+    #   Tier 2 = good  (Tesla V100 32GB — proven MuseTalk benchmark GPU)
+    #   Tier 3 = ok    (RTX 4080S, RTX 3090, RTX PRO 4500)
+    #   Tier 4 = fallback (anything else with enough VRAM)
+    #
+    # Within each tier, pick cheapest (dph_total).
+    # This ensures we never pick a slow cheap GPU over a fast one at similar price.
+ 
+    def tier(offer):
+        gpu  = offer.get("gpu_name", "")
+        vram = offer.get("gpu_ram", 0)   # MB
+        price = offer.get("dph_total", 99)
+ 
+        if any(x in gpu for x in ["A100", "H100", "RTX 5090", "L40 "]):
+            return (0, price)
+        if any(x in gpu for x in ["Q RTX 8000", "RTX A6000", "A40", "RTX 5000Ada", "L40S"]):
+            return (1, price)
+        if "Tesla V100" in gpu and vram >= 32000:
+            return (2, price)
+        if any(x in gpu for x in ["RTX 4080", "RTX 3090", "RTX PRO 4500", "RTX 4090"]):
+            return (3, price)
+        return (4, price)
+ 
+    offers.sort(key=tier)
+    best = offers[0]
+    print(f"  Selected: {best['gpu_name']} | {best['gpu_ram']}MB VRAM "
+          f"| ${best['dph_total']:.4f}/hr | id:{best['id']}")
+    return best["id"], best.get("public_ipaddr", "")
 
 
 def create_instance(offer_id: int, job_id: str) -> int:
@@ -266,14 +314,18 @@ wget -q "{GITHUB_RAW}/musetalk_server.py"   -O /workspace/musetalk_server.py
 wget -q "{GITHUB_RAW}/musetalk_deploy.sh"  -O /workspace/musetalk_deploy.sh
 chmod +x /workspace/musetalk_deploy.sh
 
-API_KEY="{MUSETALK_API_KEY}" bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
+bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
 """
 
     payload = {
+        "client_id":    "me",
         "image":        "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime",
         "disk":         60,
         "onstart":      onstart,          # vast.ai runs this at container start
-        "env":          f"-p 8000:8000 -e MUSETALK_API_KEY={MUSETALK_API_KEY}",
+        "env":          {
+                            "MUSETALK_API_KEY": MUSETALK_API_KEY,
+                            "API_KEY":          MUSETALK_API_KEY,
+                          },
         "label":        f"musetalk-{job_id[:8]}",
         "runtype":      "ssh",
     }
@@ -294,13 +346,34 @@ API_KEY="{MUSETALK_API_KEY}" bash /workspace/musetalk_deploy.sh --api-key "{MUSE
 
 
 def get_instance_info(instance_id: int) -> dict:
+    """Fetch instance details. Tries v1 endpoint first, falls back to v0."""
+    # v1 endpoint (preferred — not deprecated)
     resp = requests.get(
+        f"https://console.vast.ai/api/v1/instances/{instance_id}",
+        headers=vast_headers(),
+        timeout=15,
+    )
+    if resp.ok:
+        data = resp.json()
+        # v1 returns the instance dict directly or under "instance"
+        if isinstance(data, dict) and "id" in data:
+            return data
+        if isinstance(data, dict) and "instance" in data:
+            return data["instance"]
+        if isinstance(data, list) and data:
+            return data[0]
+
+    # v0 fallback
+    resp2 = requests.get(
         f"{VAST_BASE}/instances/{instance_id}/",
         headers=vast_headers(),
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json().get("instances", [{}])[0]
+    resp2.raise_for_status()
+    instances = resp2.json().get("instances", [])
+    if not instances:
+        raise RuntimeError(f"Instance {instance_id} not found (empty response from v0 and v1)")
+    return instances[0]
 
 
 def destroy_instance(instance_id: int):
@@ -320,9 +393,20 @@ def wait_for_musetalk(instance_id: int, timeout: int = 900) -> str:
     api_url  = None
 
     print(f"  Waiting for instance {instance_id} to start...")
+    poll_count = 0
     while time.time() < deadline:
-        info = get_instance_info(instance_id)
-        state = info.get("actual_status", "")
+        try:
+            info = get_instance_info(instance_id)
+        except Exception as e:
+            poll_count += 1
+            if poll_count <= 3 or poll_count % 5 == 0:
+                print(f"  [warn] Could not fetch instance info (attempt {poll_count}): {e}")
+            time.sleep(15)
+            continue
+        state = info.get("actual_status", info.get("status", ""))
+        if poll_count % 4 == 0:
+            print(f"  [poll] state={state}")
+        poll_count += 1
 
         if state == "running":
             ip   = info.get("public_ipaddr") or info.get("ssh_host")
