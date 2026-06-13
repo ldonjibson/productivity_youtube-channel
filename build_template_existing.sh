@@ -89,33 +89,45 @@ except:
 # ── Step 1: Verify instance is running ────────────────────────────────────────
 log "Checking instance $INSTANCE_ID status..."
 INFO=$(curl -s "$VAST_BASE/instances/$INSTANCE_ID/" -H "$AUTH")
+
+# v0 API returns instances as dict or list — handle both
 STATE=$(echo "$INFO" | python3 -c "
 import sys, json
-instances = json.load(sys.stdin).get('instances', [])
-print(instances[0].get('actual_status','') if instances else '')
+data = json.load(sys.stdin)
+instances = data.get('instances', {})
+if isinstance(instances, list):
+    inst = instances[0] if instances else {}
+elif isinstance(instances, dict):
+    inst = instances
+else:
+    inst = {}
+print(inst.get('actual_status', inst.get('cur_state', '')))
 " 2>/dev/null || echo "")
 
 if [ "$STATE" != "running" ]; then
-    err "Instance is not running (state: $STATE). Start it from the Vast.ai dashboard first."
+    err "Instance is not running (state: '$STATE'). Start it from the Vast.ai dashboard first."
 fi
 log "Instance is running!"
 
 # ── Step 2: Get SSH info ─────────────────────────────────────────────────────
 SSH_HOST=$(echo "$INFO" | python3 -c "
 import sys, json
-instances = json.load(sys.stdin).get('instances', [])
-inst = instances[0] if instances else {}
+data = json.load(sys.stdin)
+instances = data.get('instances', {})
+inst = instances[0] if isinstance(instances, list) and instances else (instances if isinstance(instances, dict) else {})
 print(inst.get('ssh_host', inst.get('public_ipaddr', '')))
 ")
 SSH_PORT=$(echo "$INFO" | python3 -c "
 import sys, json
-instances = json.load(sys.stdin).get('instances', [])
-inst = instances[0] if instances else {}
+data = json.load(sys.stdin)
+instances = data.get('instances', {})
+inst = instances[0] if isinstance(instances, list) and instances else (instances if isinstance(instances, dict) else {})
 ports = inst.get('ports', {})
-for cp, mappings in ports.items():
-    if '22' in str(cp) and mappings:
-        print(mappings[0].get('HostPort', ''))
-        break
+if isinstance(ports, dict):
+    for cp, mappings in ports.items():
+        if '22' in str(cp) and isinstance(mappings, list) and mappings:
+            print(mappings[0].get('HostPort', ''))
+            break
 " 2>/dev/null || echo "")
 
 # ── Step 3: Upload setup scripts and install ──────────────────────────────────
@@ -209,20 +221,23 @@ log ""
 # The deploy script starts uvicorn on port 8000 when done
 IP=$(echo "$INFO" | python3 -c "
 import sys, json
-instances = json.load(sys.stdin).get('instances', [])
-inst = instances[0] if instances else {}
+data = json.load(sys.stdin)
+instances = data.get('instances', {})
+inst = instances[0] if isinstance(instances, list) and instances else (instances if isinstance(instances, dict) else {})
 print(inst.get('public_ipaddr') or inst.get('ssh_host', ''))
 ")
 PORTS=$(echo "$INFO" | python3 -c "
 import sys, json
-instances = json.load(sys.stdin).get('instances', [])
-inst = instances[0] if instances else {}
+data = json.load(sys.stdin)
+instances = data.get('instances', {})
+inst = instances[0] if isinstance(instances, list) and instances else (instances if isinstance(instances, dict) else {})
 ports = inst.get('ports', {})
 host_port = None
-for cp, mappings in ports.items():
-    if '8000' in str(cp) and mappings:
-        host_port = mappings[0].get('HostPort')
-        break
+if isinstance(ports, dict):
+    for cp, mappings in ports.items():
+        if '8000' in str(cp) and isinstance(mappings, list) and mappings:
+            host_port = mappings[0].get('HostPort')
+            break
 print(host_port or '')
 ")
 

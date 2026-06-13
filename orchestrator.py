@@ -383,17 +383,19 @@ def get_instance_info(instance_id: int) -> dict:
         if isinstance(data, list) and data:
             return data[0]
 
-    # v0 fallback
+    # v0 fallback — note: v0 returns instances as a DICT, not a list
     resp2 = requests.get(
         f"{VAST_BASE}/instances/{instance_id}/",
         headers=vast_headers(),
         timeout=15,
     )
     resp2.raise_for_status()
-    instances = resp2.json().get("instances", [])
-    if not instances:
-        raise RuntimeError(f"Instance {instance_id} not found (empty response from v0 and v1)")
-    return instances[0]
+    instances = resp2.json().get("instances", {})
+    if isinstance(instances, list):
+        return instances[0] if instances else {}
+    if isinstance(instances, dict) and instances:
+        return instances
+    raise RuntimeError(f"Instance {instance_id} not found (empty response from v0 and v1)")
 
 
 def destroy_instance(instance_id: int):
