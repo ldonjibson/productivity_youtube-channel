@@ -96,7 +96,7 @@ RUN huggingface-cli download stabilityai/sd-vae-ft-mse \
     --include "config.json" "diffusion_pytorch_model.bin"
 
 # Face Parse Bisent — 79999_iter.pth from Google Drive
-RUN gdown --id 154JgKpzCPW82qINcVieuPH3fZ2e0P812 \
+RUN gdown "154JgKpzCPW82qINcVieuPH3fZ2e0P812" \
     -O /workspace/MuseTalk/models/face-parse-bisent/79999_iter.pth
 
 # Face Parse Bisent — resnet18 from PyTorch
