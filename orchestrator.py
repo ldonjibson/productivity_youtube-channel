@@ -329,26 +329,34 @@ bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
     template_onstart = f"""#!/bin/bash
 set -e
 export API_KEY="{MUSETALK_API_KEY}"
+export FFMPEG_PATH="/workspace/ffmpeg-static"
+export PYTHONPATH="/workspace/MuseTalk:$PYTHONPATH"
 cd /workspace
-nohup python -m uvicorn musetalk_server:app --host 0.0.0.0 --port 8000 --workers 1 > /workspace/server.log 2>&1 &
+echo "Starting MuseTalk server..."
+nohup python3 -m uvicorn musetalk_server:app --host 0.0.0.0 --port 8000 --workers 1 > /workspace/server.log 2>&1 &
+echo "Server PID: $!"
+sleep 5
+curl -s http://localhost:8000/health && echo "Server healthy!" || echo "Server not yet ready (still loading models...)"
 """
 
     onstart = template_onstart if VAST_TEMPLATE_ID else full_onstart
 
     payload = {
         "client_id":    "me",
-        "image":        "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime",
-        "disk":         60,
-        "onstart":      onstart,          # vast.ai runs this at container start
-        "env":          {
-                            "MUSETALK_API_KEY": MUSETALK_API_KEY,
-                            "API_KEY":          MUSETALK_API_KEY,
-                          },
-        "label":        f"musetalk-{job_id[:8]}",
-        "runtype":      "ssh",
+        "disk":           60,
+        "onstart":        onstart,          # vast.ai runs this at container start
+        "env":            {
+                              "MUSETALK_API_KEY": MUSETALK_API_KEY,
+                              "API_KEY":          MUSETALK_API_KEY,
+                            },
+        "label":          f"musetalk-{job_id[:8]}",
+        "runtype":        "ssh",
     }
     if VAST_TEMPLATE_ID:
         payload["template_hash_id"] = VAST_TEMPLATE_ID
+        # Template provides the Docker image — don't override it
+    else:
+        payload["image"] = "pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime"
 
     resp = requests.put(
         f"{VAST_BASE}/asks/{offer_id}/",
@@ -425,7 +433,8 @@ def wait_for_musetalk(instance_id: int, timeout: int = 900) -> str:
                 print(f"  [warn] Could not fetch instance info (attempt {poll_count}): {e}")
             time.sleep(15)
             continue
-        state = info.get("actual_status", info.get("status", ""))
+        # v0 API: actual_status is often null; cur_state is more reliable
+        state = info.get("actual_status") or info.get("cur_state") or info.get("status", "")
         if poll_count % 4 == 0:
             print(f"  [poll] state={state}")
         poll_count += 1
@@ -435,14 +444,19 @@ def wait_for_musetalk(instance_id: int, timeout: int = 900) -> str:
             # vast.ai maps container port 8000 to a random host port
             ports = info.get("ports", {})
             host_port = None
-            for container_port, mappings in ports.items():
-                if "8000" in str(container_port):
-                    host_port = mappings[0]["HostPort"] if mappings else None
-                    break
+            if isinstance(ports, dict):
+                for container_port, mappings in ports.items():
+                    if "8000" in str(container_port):
+                        host_port = mappings[0].get("HostPort") if isinstance(mappings, list) and mappings else None
+                        break
 
             if ip and host_port:
                 api_url = f"http://{ip}:{host_port}"
                 break
+
+            # State is "running" but port 8000 not mapped yet — image still pulling
+            if poll_count % 4 == 0:
+                print(f"  [poll] running but port 8000 not mapped yet (image pulling?)...")
 
         elif state in ("failed", "dead", "stopped"):
             raise RuntimeError(f"Instance entered state: {state}")

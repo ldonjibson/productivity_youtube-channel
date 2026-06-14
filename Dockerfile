@@ -122,5 +122,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# ── Default: start the API server ───────────────────────────────────────────
-CMD ["python3", "-m", "uvicorn", "musetalk_server:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+# ── Default: idle (onstart script starts uvicorn) ───────────────────────────
+# Don't start uvicorn here — vast.ai onstart script handles it
+# with proper env vars (API_KEY, FFMPEG_PATH, etc.)
+WORKDIR /workspace
+CMD ["sleep", "infinity"]
