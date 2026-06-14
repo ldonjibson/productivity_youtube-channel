@@ -57,6 +57,11 @@ RUN pip install -q torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
 
 # ── Download model weights ───────────────────────────────────────────────────
 # These are ~8GB total — baked into the image so instances boot instantly
+# HuggingFace blocks wget without a User-Agent, so we add one.
+ENV HF_BASE="https://huggingface.co/TMElyralab/MuseTalk/resolve/main"
+ENV WGET_OPTS="--no-check-certificate --show-progress"
+ENV UA="Mozilla/5.0 (Docker; x86_64) wget/1.21"
+
 RUN mkdir -p \
     /workspace/MuseTalk/models/musetalkV15 \
     /workspace/MuseTalk/models/dwpose \
@@ -64,18 +69,35 @@ RUN mkdir -p \
     /workspace/MuseTalk/models/sd-vae \
     /workspace/MuseTalk/models/whisper
 
-RUN HF="https://huggingface.co/TMElyralab/MuseTalk/resolve/main" && \
-    wget -q "$HF/musetalkV15/unet.pth"                    -O /workspace/MuseTalk/models/musetalkV15/unet.pth && \
-    wget -q "$HF/musetalkV15/musetalk.json"               -O /workspace/MuseTalk/models/musetalkV15/musetalk.json && \
-    wget -q "$HF/dwpose/dw-ll_ucoco_384.pth"              -O /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth && \
-    wget -q "$HF/dwpose/yolox_l.pth"                      -O /workspace/MuseTalk/models/dwpose/yolox_l.pth && \
-    wget -q "$HF/face-parse-bisent/79999_iter.pth"        -O /workspace/MuseTalk/models/face-parse-bisent/79999_iter.pth && \
-    wget -q "$HF/face-parse-bisent/resnet18-5c106cde.pth" -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth && \
-    wget -q "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" \
-        -O /workspace/MuseTalk/models/whisper/tiny.pt && \
-    wget -q "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin" \
-        -O /workspace/MuseTalk/models/sd-vae/diffusion_pytorch_model.bin && \
-    wget -q "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/config.json" \
+# MuseTalk V1.5
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/musetalkV15/unet.pth" \
+        -O /workspace/MuseTalk/models/musetalkV15/unet.pth
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/musetalkV15/musetalk.json" \
+        -O /workspace/MuseTalk/models/musetalkV15/musetalk.json
+
+# DWPose
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/dwpose/dw-ll_ucoco_384.pth" \
+        -O /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/dwpose/yolox_l.pth" \
+        -O /workspace/MuseTalk/models/dwpose/yolox_l.pth
+
+# Face parse
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/face-parse-bisent/79999_iter.pth" \
+        -O /workspace/MuseTalk/models/face-parse-bisent/79999_iter.pth
+RUN wget $WGET_OPTS --header="User-Agent: $UA" "$HF_BASE/face-parse-bisent/resnet18-5c106cde.pth" \
+        -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth
+
+# Whisper (from OpenAI CDN)
+RUN wget $WGET_OPTS --header="User-Agent: $UA" \
+        "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" \
+        -O /workspace/MuseTalk/models/whisper/tiny.pt
+
+# SD VAE
+RUN wget $WGET_OPTS --header="User-Agent: $UA" \
+        "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin" \
+        -O /workspace/MuseTalk/models/sd-vae/diffusion_pytorch_model.bin
+RUN wget $WGET_OPTS --header="User-Agent: $UA" \
+        "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/config.json" \
         -O /workspace/MuseTalk/models/sd-vae/config.json
 
 # ── Copy server script ──────────────────────────────────────────────────────
