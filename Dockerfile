@@ -75,20 +75,20 @@ RUN mkdir -p \
     /workspace/MuseTalk/models/whisper \
     /workspace/MuseTalk/models/syncnet
 
-# MuseTalk V1.5 (HuggingFace — uses huggingface-cli which handles auth/retries)
+# MuseTalk V1.5 (HuggingFace)
 RUN huggingface-cli download TMElyralab/MuseTalk \
     --local-dir /workspace/MuseTalk/models \
     --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
 
-# DWPose (HuggingFace)
-RUN huggingface-cli download yzd-v/DWPose \
-    --local-dir /workspace/MuseTalk/models \
-    --include "dw-ll_ucoco_384.pth"
+# DWPose (direct wget — huggingface-cli puts files at wrong path)
+RUN wget -q "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/dw-ll_ucoco_384.pth" \
+        -O /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth && \
+    wget -q "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/yolox_l.pth" \
+        -O /workspace/MuseTalk/models/dwpose/yolox_l.pth
 
-# Whisper tiny (HuggingFace)
-RUN huggingface-cli download openai/whisper-tiny \
-    --local-dir /workspace/MuseTalk/models \
-    --include "config.json" "pytorch_model.bin" "preprocessor_config.json"
+# Whisper tiny (direct wget)
+RUN wget -q "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" \
+        -O /workspace/MuseTalk/models/whisper/tiny.pt
 
 # SD VAE ft-mse (HuggingFace)
 RUN huggingface-cli download stabilityai/sd-vae-ft-mse \
@@ -104,10 +104,9 @@ RUN wget --no-check-certificate \
     "https://download.pytorch.org/models/resnet18-5c106cde.pth" \
     -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth
 
-# SyncNet (HuggingFace)
-RUN huggingface-cli download ByteDance/LatentSync \
-    --local-dir /workspace/MuseTalk/models \
-    --include "latentsync_syncnet.pt"
+# SyncNet (direct wget — huggingface-cli puts files at wrong path)
+RUN wget -q "https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_syncnet.pt" \
+    -O /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt
 
 # ── Copy server script ──────────────────────────────────────────────────────
 COPY musetalk_server.py /workspace/musetalk_server.py
