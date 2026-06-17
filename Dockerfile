@@ -75,35 +75,19 @@ RUN mkdir -p \
     /workspace/MuseTalk/models/whisper \
     /workspace/MuseTalk/models/syncnet
 
-# MuseTalk V1.5 (HuggingFace — downloads to musetalkV15/ subdirectory)
-RUN huggingface-cli download TMElyralab/MuseTalk \
-    --local-dir /workspace/MuseTalk/models \
-    --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
+# Download all model weights using the same proven URLs as musetalk_deploy.sh
+HF="https://huggingface.co/TMElyralab/MuseTalk/resolve/main"
 
-# DWPose (downloads to dwpose/ subdirectory)
-RUN huggingface-cli download TMElyralab/MuseTalk \
-    --local-dir /workspace/MuseTalk/models \
-    --include "dwpose/dw-ll_ucoco_384.pth" "dwpose/yolox_l.pth"
-
-# SD VAE (downloads to sd-vae/ subdirectory)
-RUN huggingface-cli download TMElyralab/MuseTalk \
-    --local-dir /workspace/MuseTalk/models \
-    --include "sd-vae/config.json" "sd-vae/diffusion_pytorch_model.bin"
-
-# Face Parse Bisent (downloads to face-parse-bisent/ subdirectory)
-RUN huggingface-cli download TMElyralab/MuseTalk \
-    --local-dir /workspace/MuseTalk/models \
-    --include "face-parse-bisent/79999_iter.pth" "face-parse-bisent/resnet18-5c106cde.pth"
-
-# Whisper tiny (Azure CDN — no redirect issues)
-RUN curl -L --retry 3 --retry-delay 5 -o /workspace/MuseTalk/models/whisper/tiny.pt \
-        "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
-
-# SyncNet (downloads to syncnet/ subdirectory)
-RUN huggingface-cli download ByteDance/LatentSync \
-    --local-dir /workspace/MuseTalk/models \
-    --include "latentsync_syncnet.pt" \
-    && mv /workspace/MuseTalk/models/latentsync_syncnet.pt /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt
+RUN wget -q "$HF/musetalkV15/unet.pth"                    -O /workspace/MuseTalk/models/musetalkV15/unet.pth \
+    && wget -q "$HF/musetalkV15/musetalk.json"             -O /workspace/MuseTalk/models/musetalkV15/musetalk.json \
+    && wget -q "$HF/dwpose/dw-ll_ucoco_384.pth"            -O /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth \
+    && wget -q "$HF/dwpose/yolox_l.pth"                    -O /workspace/MuseTalk/models/dwpose/yolox_l.pth \
+    && wget -q "$HF/face-parse-bisent/79999_iter.pth"       -O /workspace/MuseTalk/models/face-parse-bisent/79999_iter.pth \
+    && wget -q "$HF/face-parse-bisent/resnet18-5c106cde.pth" -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth \
+    && wget -q "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin" -O /workspace/MuseTalk/models/sd-vae/diffusion_pytorch_model.bin \
+    && wget -q "https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/config.json" -O /workspace/MuseTalk/models/sd-vae/config.json \
+    && wget -q "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" -O /workspace/MuseTalk/models/whisper/tiny.pt \
+    && wget -q "https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_syncnet.pt" -O /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt
 
 # Verify all model files exist
 RUN echo "=== Verifying model files ===" \
