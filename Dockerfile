@@ -75,38 +75,31 @@ RUN mkdir -p \
     /workspace/MuseTalk/models/whisper \
     /workspace/MuseTalk/models/syncnet
 
-# MuseTalk V1.5 (HuggingFace)
+# MuseTalk V1.5 + DWPose + all models from the MuseTalk repo (huggingface-cli preserves subdirectory paths)
 RUN huggingface-cli download TMElyralab/MuseTalk \
     --local-dir /workspace/MuseTalk/models \
-    --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
+    --include \
+        "musetalkV15/musetalk.json" \
+        "musetalkV15/unet.pth" \
+        "dwpose/dw-ll_ucoco_384.pth" \
+        "dwpose/yolox_l.pth" \
+        "sd-vae/config.json" \
+        "sd-vae/diffusion_pytorch_model.bin" \
+        "face-parse-bisent/79999_iter.pth" \
+        "face-parse-bisent/resnet18-5c106cde.pth"
 
-# DWPose (curl -L follows HuggingFace redirects, wget fails with exit code 8)
-RUN curl -L -o /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth \
-        "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/dw-ll_ucoco_384.pth" && \
-    curl -L -o /workspace/MuseTalk/models/dwpose/yolox_l.pth \
-        "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/yolox_l.pth"
+# Whisper tiny (from Azure CDN — no HuggingFace redirect issues)
+RUN curl -L --retry 3 --retry-delay 5 -o /workspace/MuseTalk/models/whisper/tiny.pt \
+        "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" \
+    && ls -lh /workspace/MuseTalk/models/whisper/tiny.pt
 
-# Whisper tiny (curl -L)
-RUN curl -L -o /workspace/MuseTalk/models/whisper/tiny.pt \
-        "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
-
-# SD VAE ft-mse (HuggingFace)
-RUN huggingface-cli download stabilityai/sd-vae-ft-mse \
-    --local-dir /workspace/MuseTalk/models/sd-vae \
-    --include "config.json" "diffusion_pytorch_model.bin"
-
-# Face Parse Bisent — 79999_iter.pth from Google Drive
-RUN gdown "154JgKpzCPW82qINcVieuPH3fZ2e0P812" \
-    -O /workspace/MuseTalk/models/face-parse-bisent/79999_iter.pth
-
-# Face Parse Bisent — resnet18 from PyTorch
-RUN wget --no-check-certificate \
-    "https://download.pytorch.org/models/resnet18-5c106cde.pth" \
-    -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth
-
-# SyncNet (curl -L follows HuggingFace redirects)
-RUN curl -L -o /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt \
-    "https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_syncnet.pt"
+# SyncNet from ByteDance LatentSync repo
+RUN huggingface-cli download ByteDance/LatentSync \
+    --local-dir /workspace/MuseTalk/models/syncnet-tmp \
+    --include "latentsync_syncnet.pt" \
+    && mv /workspace/MuseTalk/models/syncnet-tmp/latentsync_syncnet.pt \
+          /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt \
+    && rm -rf /workspace/MuseTalk/models/syncnet-tmp
 
 # ── Copy server script ──────────────────────────────────────────────────────
 COPY musetalk_server.py /workspace/musetalk_server.py
