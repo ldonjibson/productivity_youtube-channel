@@ -80,15 +80,15 @@ RUN huggingface-cli download TMElyralab/MuseTalk \
     --local-dir /workspace/MuseTalk/models \
     --include "musetalkV15/musetalk.json" "musetalkV15/unet.pth"
 
-# DWPose (direct wget — huggingface-cli puts files at wrong path)
-RUN wget -q "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/dw-ll_ucoco_384.pth" \
-        -O /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth && \
-    wget -q "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/yolox_l.pth" \
-        -O /workspace/MuseTalk/models/dwpose/yolox_l.pth
+# DWPose (curl -L follows HuggingFace redirects, wget fails with exit code 8)
+RUN curl -L -o /workspace/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth \
+        "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/dw-ll_ucoco_384.pth" && \
+    curl -L -o /workspace/MuseTalk/models/dwpose/yolox_l.pth \
+        "https://huggingface.co/TMElyralab/MuseTalk/resolve/main/dwpose/yolox_l.pth"
 
-# Whisper tiny (direct wget)
-RUN wget -q "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt" \
-        -O /workspace/MuseTalk/models/whisper/tiny.pt
+# Whisper tiny (curl -L)
+RUN curl -L -o /workspace/MuseTalk/models/whisper/tiny.pt \
+        "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
 
 # SD VAE ft-mse (HuggingFace)
 RUN huggingface-cli download stabilityai/sd-vae-ft-mse \
@@ -104,9 +104,9 @@ RUN wget --no-check-certificate \
     "https://download.pytorch.org/models/resnet18-5c106cde.pth" \
     -O /workspace/MuseTalk/models/face-parse-bisent/resnet18-5c106cde.pth
 
-# SyncNet (direct wget — huggingface-cli puts files at wrong path)
-RUN wget -q "https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_syncnet.pt" \
-    -O /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt
+# SyncNet (curl -L follows HuggingFace redirects)
+RUN curl -L -o /workspace/MuseTalk/models/syncnet/latentsync_syncnet.pt \
+    "https://huggingface.co/ByteDance/LatentSync/resolve/main/latentsync_syncnet.pt"
 
 # ── Copy server script ──────────────────────────────────────────────────────
 COPY musetalk_server.py /workspace/musetalk_server.py
