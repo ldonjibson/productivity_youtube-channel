@@ -13,7 +13,7 @@
 # On vast.ai, instances boot in ~30-60s (no downloads needed)
 # =============================================================================
 
-FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
+FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
 
 LABEL maintainer="ldonjibson"
 LABEL description="MuseTalk lip-sync API server — ready to run"
