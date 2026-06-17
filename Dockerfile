@@ -13,7 +13,7 @@
 # On vast.ai, instances boot in ~30-60s (no downloads needed)
 # =============================================================================
 
-FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-runtime
+FROM pytorch/pytorch:2.0.1-cuda11.8-cudnn8-runtime
 
 LABEL maintainer="ldonjibson"
 LABEL description="MuseTalk lip-sync API server — ready to run"
@@ -122,8 +122,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# ── Default: idle (onstart script starts uvicorn) ───────────────────────────
-# Don't start uvicorn here — vast.ai onstart script handles it
-# with proper env vars (API_KEY, FFMPEG_PATH, etc.)
+# ── Default: keep container alive ──────────────────────────────────────────────
+# Vast.ai onstart script handles launching uvicorn.
+# sleep infinity keeps the container alive as PID 1.
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

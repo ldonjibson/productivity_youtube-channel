@@ -241,8 +241,9 @@ def find_best_offer() -> tuple[int, str]:
         "rentable":          {"eq": True},
         "rented":            {"eq": False},
         "direct_port_count": {"gte": 1},
-        "disk_space":        {"gte": 100},   # GB — headroom for models + outputs
+        "disk_space":        {"gte": 120},   # GB — headroom for models + outputs
         "gpu_ram":           {"gte": 25000}, # MB — 25GB+ rules out weak cards
+
     }
     resp = requests.post(
         VAST_SEARCH,
@@ -270,6 +271,11 @@ def find_best_offer() -> tuple[int, str]:
  
     if not offers:
         raise RuntimeError("No suitable GPU offers found on vast.ai")
+
+    # Filter out low-CPU machines (need 16+ cores for MuseTalk preprocessing)
+    offers = [o for o in offers if o.get("cpu_cores", 0) >= 16]
+    if not offers:
+        raise RuntimeError("No suitable GPU offers with enough CPU found")
  
     # Score offers by performance tier first, then price within tier.
     # Tiers based on actual vast.ai GPU names observed:
@@ -327,7 +333,6 @@ bash /workspace/musetalk_deploy.sh --api-key "{MUSETALK_API_KEY}"
 
     # ── Minimal onstart (template has everything pre-installed) ────────────────
     template_onstart = f"""#!/bin/bash
-set -e
 export API_KEY="{MUSETALK_API_KEY}"
 export FFMPEG_PATH="/workspace/ffmpeg-static"
 export PYTHONPATH="/workspace/MuseTalk:$PYTHONPATH"
@@ -335,8 +340,17 @@ cd /workspace
 echo "Starting MuseTalk server..."
 nohup python3 -m uvicorn musetalk_server:app --host 0.0.0.0 --port 8000 --workers 1 > /workspace/server.log 2>&1 &
 echo "Server PID: $!"
-sleep 5
-curl -s http://localhost:8000/health && echo "Server healthy!" || echo "Server not yet ready (still loading models...)"
+# Wait for server to be ready (up to 5 minutes)
+for i in $(seq 1 30); do
+  sleep 10
+  if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+    echo "Server healthy after $((i*10))s"
+    exit 0
+  fi
+  echo "Waiting for server... ($((i*10))s)"
+done
+echo "Server did not start in time. Check server.log"
+exit 0
 """
 
     onstart = template_onstart if VAST_TEMPLATE_ID else full_onstart
